@@ -238,34 +238,64 @@ const kanaData = [
   {h:'わ',k:'ワ',r:'wa'},{h:'を',k:'ヲ',r:'wo'},{h:'ん',k:'ン',r:'n'}
 ];
 
-// SRS intervals per box (milliseconds)
-const SRS_INTERVALS = [
-  0,            // Box 0: immediate
-  60000,        // Box 1: 1 minute
-  300000,       // Box 2: 5 minutes
-  1500000,      // Box 3: 25 minutes
-  7200000,      // Box 4: 2 hours
-  43200000,     // Box 5: 12 hours
-  259200000,    // Box 6: 3 days
-  604800000,    // Box 7: 7 days (mastered)
-];
-const MAX_BOX = SRS_INTERVALS.length - 1;
-const MAX_NEW_IN_LEARNING = 5;
+// Queue-based SRS with correctness percentage
+const MIN_GAP = 2;
 
 // State
 let current = null;
 let penSize = 5;
 let trackpadMode = false, penDown = false;
-let srsData = { version: 1, items: {}, stats: { total: 0, correct: 0 } };
+let queue = []; // array of romaji keys
+let srsData = { version: 2, items: {}, stats: { total: 0, correct: 0 } };
+
+function getItem(r) {
+  return srsData.items[r] || null;
+}
+
+function adjustedRate(r) {
+  const item = getItem(r);
+  if (!item) return (0 + 1) / (0 + 2); // 0.33 for unseen
+  return (item.correct + 1) / (item.total + 2);
+}
+
+function getInsertPosition(r) {
+  const rate = adjustedRate(r);
+  const maxGap = queue.length;
+  const gap = MIN_GAP + Math.round(rate * rate * (maxGap - MIN_GAP));
+  return Math.min(gap, queue.length);
+}
+
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+function buildQueue() {
+  const items = kanaData.map(k => ({ r: k.r, rate: adjustedRate(k.r) }));
+  // Sort by adjusted rate ascending (weakest first), shuffle within similar rates
+  shuffle(items);
+  items.sort((a, b) => a.rate - b.rate);
+  queue = items.map(i => i.r);
+}
 
 function loadSRS() {
   try {
     const raw = localStorage.getItem('kana-srs');
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (parsed && parsed.version === 1 && parsed.items) {
+      if (parsed && parsed.version === 2 && parsed.items) {
         srsData = parsed;
         if (!srsData.stats) srsData.stats = { total: 0, correct: 0 };
+      } else if (parsed && parsed.version === 1 && parsed.items) {
+        // Migrate v1 (box/last) to v2 (correct/total)
+        srsData = { version: 2, items: {}, stats: parsed.stats || { total: 0, correct: 0 } };
+        for (const [r, v] of Object.entries(parsed.items)) {
+          const box = v.box || 0;
+          srsData.items[r] = { correct: box, total: box };
+        }
       }
     }
   } catch (e) { /* corrupt data, start fresh */ }
@@ -275,70 +305,8 @@ function saveSRS() {
   try { localStorage.setItem('kana-srs', JSON.stringify(srsData)); } catch (e) {}
 }
 
-function getItem(r) {
-  return srsData.items[r] || null;
-}
-
-function isDue(r, now) {
-  const item = getItem(r);
-  if (!item) return false; // new items handled separately
-  return now >= item.last + SRS_INTERVALS[item.box];
-}
-
-function pickNextKana() {
-  const now = Date.now();
-
-  // 1. Collect due items
-  const due = kanaData
-    .filter(k => getItem(k.r) && isDue(k.r, now))
-    .map(k => {
-      const item = getItem(k.r);
-      const overdue = now - (item.last + SRS_INTERVALS[item.box]);
-      return { kana: k, box: item.box, overdue };
-    })
-    .sort((a, b) => a.box - b.box || b.overdue - a.overdue);
-
-  if (due.length) return due[0].kana;
-
-  // 2. Introduce new items if few are in learning
-  const inLearning = kanaData.filter(k => {
-    const item = getItem(k.r);
-    return item && item.box <= 1;
-  }).length;
-
-  if (inLearning < MAX_NEW_IN_LEARNING) {
-    const unseen = kanaData.filter(k => !getItem(k.r));
-    if (unseen.length) return unseen[0];
-  }
-
-  // 3. Nothing due
-  return null;
-}
-
-function getNextDueTime() {
-  const now = Date.now();
-  let earliest = Infinity;
-  for (const k of kanaData) {
-    const item = getItem(k.r);
-    if (!item) continue;
-    if (item.box >= MAX_BOX) continue; // already mastered, still has interval
-    const dueAt = item.last + SRS_INTERVALS[item.box];
-    if (dueAt > now && dueAt < earliest) earliest = dueAt;
-  }
-  return earliest === Infinity ? null : earliest;
-}
-
-function formatTimeUntil(ms) {
-  const sec = Math.ceil(ms / 1000);
-  if (sec < 60) return sec + 's';
-  const min = Math.ceil(sec / 60);
-  if (min < 60) return min + ' min';
-  const hr = Math.round(min / 60);
-  if (hr < 24) return hr + 'h';
-  return Math.round(hr / 24) + 'd';
-}
-
 loadSRS();
+buildQueue();
 
 // Two canvas systems
 const canvases = {
@@ -367,7 +335,7 @@ document.querySelectorAll('.pen-size-btn').forEach(btn => {
   });
 });
 
-// (SRS selection logic is in pickNextKana above)
+// (Queue-based SRS logic is above)
 
 // Drawing helpers per canvas
 function getPos(cv, e) {
@@ -496,41 +464,45 @@ $('showAnswerBtn').addEventListener('click', () => {
 
 function grade(ok) {
   const r = current.r;
-  const now = Date.now();
 
-  // Update SRS item
+  // Update per-item stats
   const prev = getItem(r);
-  const prevBox = prev ? prev.box : 0;
-  const newBox = ok ? Math.min(prevBox + 1, MAX_BOX) : 0;
-  srsData.items[r] = { box: newBox, last: now };
+  const correct = (prev ? prev.correct : 0) + (ok ? 1 : 0);
+  const total = (prev ? prev.total : 0) + 1;
+  srsData.items[r] = { correct, total };
 
-  // Update stats
+  // Update global stats
   srsData.stats.total++;
   if (ok) srsData.stats.correct++;
   saveSRS();
+
+  // Re-insert into queue at position based on correctness
+  const pos = getInsertPosition(r);
+  queue.splice(pos, 0, r);
 
   // Update UI stats
   $('total').textContent = srsData.stats.total;
   $('correct').textContent = srsData.stats.correct;
   $('rate').textContent = Math.round(srsData.stats.correct / srsData.stats.total * 100) + '%';
 
-  // Progress bar: items at max box / total
+  // Progress bar: items with >=80% correct and >=5 attempts
   const mastered = kanaData.filter(k => {
     const item = getItem(k.r);
-    return item && item.box >= MAX_BOX;
+    return item && item.total >= 5 && (item.correct / item.total) >= 0.8;
   }).length;
   $('progressFill').style.width = Math.round(mastered / kanaData.length * 100) + '%';
 
   $('gradeButtons').style.display = 'none';
   $('nextBtn').style.display = 'inline-block';
 
-  // Feedback
-  if (ok && newBox >= MAX_BOX) {
-    $('answerExtra').textContent = '⭐ Mastered!';
+  // Feedback: show per-item correctness
+  const pct = Math.round(correct / total * 100);
+  if (ok && pct >= 80 && total >= 5) {
+    $('answerExtra').textContent = pct + '% — strong!';
   } else if (ok) {
-    $('answerExtra').textContent = 'Next review in ' + formatTimeUntil(SRS_INTERVALS[newBox]);
+    $('answerExtra').textContent = pct + '% correct';
   } else {
-    $('answerExtra').textContent = 'Will review again shortly';
+    $('answerExtra').textContent = pct + '% — coming back soon';
   }
 }
 
@@ -540,7 +512,8 @@ $('nextBtn').addEventListener('click', nextQuestion);
 $('resetBtn').addEventListener('click', () => {
   if (!confirm('Reset all progress? This cannot be undone.')) return;
   localStorage.removeItem('kana-srs');
-  srsData = { version: 1, items: {}, stats: { total: 0, correct: 0 } };
+  srsData = { version: 2, items: {}, stats: { total: 0, correct: 0 } };
+  buildQueue();
   $('total').textContent = '0';
   $('correct').textContent = '0';
   $('rate').textContent = '-';
@@ -548,12 +521,11 @@ $('resetBtn').addEventListener('click', () => {
   nextQuestion();
 });
 
-let waitTimer = null;
-
 function nextQuestion() {
-  if (waitTimer) { clearInterval(waitTimer); waitTimer = null; }
+  // Pop from front of queue
+  const r = queue.shift();
+  current = r ? kanaData.find(k => k.r === r) : null;
 
-  current = pickNextKana();
   clearCanvas(canvases.h); clearCanvas(canvases.k);
   penDown = false;
   canvases.h.el.style.borderColor = '';
@@ -565,48 +537,28 @@ function nextQuestion() {
   $('nextBtn').style.display = 'none';
 
   if (!current) {
-    // Check if all mastered or just waiting
-    const mastered = kanaData.filter(k => {
-      const item = getItem(k.r);
-      return item && item.box >= MAX_BOX;
-    }).length;
-
-    if (mastered >= kanaData.length) {
-      $('promptRomaji').textContent = '🎉';
-      $('promptInfo').textContent = 'All mastered!';
-      $('showAnswerBtn').style.display = 'none';
-      return;
-    }
-
-    // Items exist but none due yet — show countdown
+    $('promptRomaji').textContent = '🎉';
+    $('promptInfo').textContent = 'All mastered!';
     $('showAnswerBtn').style.display = 'none';
-    const nextDue = getNextDueTime();
-    if (nextDue) {
-      const updateCountdown = () => {
-        const remaining = nextDue - Date.now();
-        if (remaining <= 0) {
-          clearInterval(waitTimer); waitTimer = null;
-          nextQuestion();
-          return;
-        }
-        $('promptRomaji').textContent = '⏳';
-        $('promptInfo').textContent = 'Next review in ' + formatTimeUntil(remaining);
-      };
-      updateCountdown();
-      waitTimer = setInterval(updateCountdown, 1000);
-    } else {
-      $('promptRomaji').textContent = '⏳';
-      $('promptInfo').textContent = 'All caught up! Check back later.';
-    }
     return;
   }
 
-  // Show question
-  const now = Date.now();
-  const dueCount = kanaData.filter(k => getItem(k.r) && isDue(k.r, now)).length;
-  const newCount = kanaData.filter(k => !getItem(k.r)).length;
+  // Show question with queue info
+  const weak = kanaData.filter(k => {
+    const item = getItem(k.r);
+    return item && (item.correct / item.total) < 0.5;
+  }).length;
+  const strong = kanaData.filter(k => {
+    const item = getItem(k.r);
+    return item && item.total >= 5 && (item.correct / item.total) >= 0.8;
+  }).length;
+  const unseen = kanaData.filter(k => !getItem(k.r)).length;
   $('promptRomaji').textContent = current.r;
-  $('promptInfo').textContent = `${dueCount} due · ${newCount} new`;
+  const parts = [];
+  if (weak) parts.push(weak + ' weak');
+  if (unseen) parts.push(unseen + ' new');
+  if (strong) parts.push(strong + ' strong');
+  $('promptInfo').textContent = parts.join(' · ') || 'Keep going!';
 }
 
 // Keyboard
@@ -644,7 +596,7 @@ if (srsData.stats.total > 0) {
 }
 const masteredOnLoad = kanaData.filter(k => {
   const item = getItem(k.r);
-  return item && item.box >= MAX_BOX;
+  return item && item.total >= 5 && (item.correct / item.total) >= 0.8;
 }).length;
 $('progressFill').style.width = Math.round(masteredOnLoad / kanaData.length * 100) + '%';
 
