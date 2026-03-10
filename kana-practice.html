@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kana Writing Practice</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Hiragino Sans', 'Noto Sans JP', system-ui, sans-serif;
+    background: #f0f4f8; min-height: 100vh;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 20px; color: #2d3748;
+  }
+  h1 { font-size: 1.5rem; margin-bottom: 4px; color: #1a202c; }
+  .subtitle { font-size: 0.85rem; color: #718096; margin-bottom: 16px; }
+
+  .main {
+    background: white; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    padding: 24px; width: 100%; max-width: 540px;
+    display: flex; flex-direction: column; align-items: center;
+  }
+  .stats {
+    display: flex; gap: 18px; margin-bottom: 14px; font-size: 0.82rem; color: #718096;
+  }
+  .stats span { font-weight: 600; color: #2d3748; }
+
+  .prompt-area { text-align: center; margin-bottom: 14px; }
+  .prompt-info { font-size: 0.8rem; color: #a0aec0; margin-bottom: 2px; }
+  .prompt-romaji {
+    font-size: 3rem; font-weight: 700; color: #2b6cb0; letter-spacing: 2px; line-height: 1.2;
+  }
+
+  /* Dual canvas layout */
+  .canvases {
+    display: flex; gap: 16px; margin-bottom: 10px; justify-content: center;
+    flex-wrap: wrap;
+  }
+  .canvas-col {
+    display: flex; flex-direction: column; align-items: center;
+  }
+  .canvas-label {
+    font-size: 0.78rem; color: #718096; margin-bottom: 4px; font-weight: 600;
+  }
+  .canvas-box {
+    position: relative;
+  }
+  canvas {
+    border: 2px solid #e2e8f0; border-radius: 10px; background: #fefefe;
+    cursor: crosshair; touch-action: none;
+  }
+  canvas.active-canvas { border-color: #4299e1; box-shadow: 0 0 0 2px rgba(66,153,225,0.2); }
+  .canvas-ph {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    font-size: 0.85rem; color: #d0d5dd; pointer-events: none;
+  }
+  .canvas-ph.hidden { display: none; }
+
+  /* Controls */
+  .canvas-controls {
+    display: flex; gap: 8px; margin-bottom: 6px; align-items: center; flex-wrap: wrap;
+    justify-content: center;
+  }
+  .canvas-controls button, .mode-toggle {
+    padding: 5px 12px; border: 1.5px solid #e2e8f0; border-radius: 8px;
+    background: white; font-size: 0.8rem; cursor: pointer; color: #4a5568;
+    transition: all 0.15s;
+  }
+  .canvas-controls button:hover, .mode-toggle:hover { border-color: #a0aec0; background: #f7fafc; }
+  .mode-toggle.active {
+    border-color: #ed8936; background: #fffaf0; color: #c05621; font-weight: 600;
+  }
+  .pen-sizes { display: flex; gap: 5px; align-items: center; }
+  .pen-size-btn {
+    width: 24px; height: 24px; border-radius: 50%; border: 2px solid #e2e8f0;
+    background: white; cursor: pointer; display: flex; align-items: center;
+    justify-content: center; transition: all 0.15s;
+  }
+  .pen-size-btn.active { border-color: #4299e1; background: #ebf8ff; }
+  .pen-size-btn:hover { border-color: #a0aec0; }
+  .pen-dot { border-radius: 50%; background: #2d3748; }
+
+  .trackpad-hint {
+    font-size: 0.72rem; color: #ed8936; text-align: center; margin-bottom: 6px;
+    display: none;
+  }
+  .trackpad-hint.show { display: block; }
+
+  /* Answer */
+  .answer-area { width: 100%; text-align: center; }
+  .show-answer-btn {
+    padding: 10px 26px; border: none; border-radius: 10px;
+    background: linear-gradient(135deg, #48bb78, #38a169); color: white;
+    font-size: 0.95rem; font-weight: 600; cursor: pointer;
+    box-shadow: 0 3px 10px rgba(72,187,120,0.3); transition: all 0.2s;
+  }
+  .show-answer-btn:hover { transform: translateY(-1px); }
+  .answer-reveal {
+    display: none; flex-direction: column; align-items: center; gap: 10px;
+    margin-top: 14px; animation: fadeIn 0.3s;
+  }
+  .answer-reveal.show { display: flex; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+  .answer-chars {
+    display: flex; gap: 24px; justify-content: center;
+  }
+  .answer-pair {
+    display: flex; flex-direction: column; align-items: center;
+  }
+  .answer-pair-label { font-size: 0.72rem; color: #a0aec0; }
+  .answer-pair-char { font-size: 3.5rem; font-weight: 300; color: #2d3748; line-height: 1.1; }
+  .answer-extra { font-size: 0.82rem; color: #718096; }
+  .grade-buttons { display: flex; gap: 10px; }
+  .grade-buttons button {
+    padding: 9px 22px; border: none; border-radius: 10px;
+    font-size: 0.9rem; font-weight: 600; cursor: pointer; transition: all 0.15s;
+  }
+  .grade-buttons button:hover { transform: translateY(-1px); }
+  .btn-correct { background: #c6f6d5; color: #276749; }
+  .btn-wrong { background: #fed7d7; color: #9b2c2c; }
+  .btn-next {
+    padding: 9px 22px; border: none; border-radius: 10px;
+    background: linear-gradient(135deg, #4299e1, #3182ce); color: white;
+    font-size: 0.9rem; font-weight: 600; cursor: pointer;
+    box-shadow: 0 3px 10px rgba(66,153,225,0.3); transition: all 0.15s;
+  }
+  .btn-next:hover { transform: translateY(-1px); }
+  .progress-bar {
+    width: 100%; height: 4px; background: #edf2f7; border-radius: 2px;
+    margin-top: 16px; overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%; background: linear-gradient(90deg, #4299e1, #48bb78);
+    border-radius: 2px; transition: width 0.4s ease;
+  }
+  .shortcut-hint {
+    margin-top: 12px; font-size: 0.72rem; color: #a0aec0; text-align: center; line-height: 1.6;
+  }
+</style>
+</head>
+<body>
+
+<h1>Kana Writing Practice ✍️</h1>
+<p class="subtitle">See the romaji, write both hiragana and katakana</p>
+
+<div class="main">
+  <div class="stats">
+    <div>Done <span id="total">0</span></div>
+    <div>Correct <span id="correct">0</span></div>
+    <div>Rate <span id="rate">-</span></div>
+  </div>
+
+  <div class="prompt-area">
+    <div class="prompt-info" id="promptInfo">Round 1 · 46 remaining</div>
+    <div class="prompt-romaji" id="promptRomaji">ka</div>
+  </div>
+
+  <div class="canvases">
+    <div class="canvas-col">
+      <div class="canvas-label">Hiragana</div>
+      <div class="canvas-box">
+        <canvas id="cvH" width="220" height="220"></canvas>
+        <div class="canvas-ph" id="phH">Write here</div>
+      </div>
+    </div>
+    <div class="canvas-col">
+      <div class="canvas-label">Katakana</div>
+      <div class="canvas-box">
+        <canvas id="cvK" width="220" height="220"></canvas>
+        <div class="canvas-ph" id="phK">Write here</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="canvas-controls">
+    <div class="pen-sizes">
+      <div class="pen-size-btn" data-size="3"><div class="pen-dot" style="width:4px;height:4px;"></div></div>
+      <div class="pen-size-btn active" data-size="5"><div class="pen-dot" style="width:7px;height:7px;"></div></div>
+      <div class="pen-size-btn" data-size="8"><div class="pen-dot" style="width:10px;height:10px;"></div></div>
+    </div>
+    <button id="clearBtn">Clear ✕</button>
+    <button id="undoBtn">Undo ↩</button>
+    <button class="mode-toggle" id="trackpadBtn">Trackpad mode</button>
+  </div>
+  <div class="trackpad-hint" id="trackpadHint">Trackpad mode: move to draw · Space = pen up/down · Tab = switch canvas</div>
+
+  <div class="answer-area">
+    <button class="show-answer-btn" id="showAnswerBtn">Done, show answer</button>
+    <div class="answer-reveal" id="answerReveal">
+      <div class="answer-chars">
+        <div class="answer-pair">
+          <div class="answer-pair-label">Hiragana</div>
+          <div class="answer-pair-char" id="ansH"></div>
+        </div>
+        <div class="answer-pair">
+          <div class="answer-pair-label">Katakana</div>
+          <div class="answer-pair-char" id="ansK"></div>
+        </div>
+      </div>
+      <div class="answer-extra" id="answerExtra"></div>
+      <div class="grade-buttons" id="gradeButtons">
+        <button class="btn-wrong" id="wrongBtn">✕ Wrong</button>
+        <button class="btn-correct" id="correctBtn">✓ Correct</button>
+      </div>
+      <button class="btn-next" id="nextBtn" style="display:none;">Next →</button>
+    </div>
+  </div>
+
+  <div class="progress-bar">
+    <div class="progress-fill" id="progressFill" style="width:0%"></div>
+  </div>
+</div>
+
+<div class="shortcut-hint">
+  Enter = show answer / next · Tab = switch canvas<br>
+  Trackpad mode: Space = pen up/down
+</div>
+
+<script>
+const kanaData = [
+  {h:'あ',k:'ア',r:'a'},{h:'い',k:'イ',r:'i'},{h:'う',k:'ウ',r:'u'},{h:'え',k:'エ',r:'e'},{h:'お',k:'オ',r:'o'},
+  {h:'か',k:'カ',r:'ka'},{h:'き',k:'キ',r:'ki'},{h:'く',k:'ク',r:'ku'},{h:'け',k:'ケ',r:'ke'},{h:'こ',k:'コ',r:'ko'},
+  {h:'さ',k:'サ',r:'sa'},{h:'し',k:'シ',r:'shi'},{h:'す',k:'ス',r:'su'},{h:'せ',k:'セ',r:'se'},{h:'そ',k:'ソ',r:'so'},
+  {h:'た',k:'タ',r:'ta'},{h:'ち',k:'チ',r:'chi'},{h:'つ',k:'ツ',r:'tsu'},{h:'て',k:'テ',r:'te'},{h:'と',k:'ト',r:'to'},
+  {h:'な',k:'ナ',r:'na'},{h:'に',k:'ニ',r:'ni'},{h:'ぬ',k:'ヌ',r:'nu'},{h:'ね',k:'ネ',r:'ne'},{h:'の',k:'ノ',r:'no'},
+  {h:'は',k:'ハ',r:'ha'},{h:'ひ',k:'ヒ',r:'hi'},{h:'ふ',k:'フ',r:'fu'},{h:'へ',k:'ヘ',r:'he'},{h:'ほ',k:'ホ',r:'ho'},
+  {h:'ま',k:'マ',r:'ma'},{h:'み',k:'ミ',r:'mi'},{h:'む',k:'ム',r:'mu'},{h:'め',k:'メ',r:'me'},{h:'も',k:'モ',r:'mo'},
+  {h:'や',k:'ヤ',r:'ya'},{h:'ゆ',k:'ユ',r:'yu'},{h:'よ',k:'ヨ',r:'yo'},
+  {h:'ら',k:'ラ',r:'ra'},{h:'り',k:'リ',r:'ri'},{h:'る',k:'ル',r:'ru'},{h:'れ',k:'レ',r:'re'},{h:'ろ',k:'ロ',r:'ro'},
+  {h:'わ',k:'ワ',r:'wa'},{h:'を',k:'ヲ',r:'wo'},{h:'ん',k:'ン',r:'n'}
+];
+
+// State
+let current = null;
+let totalCount = 0, correctCount = 0;
+let penSize = 5;
+let trackpadMode = false, penDown = false;
+let masteryMap = {}; // key = romaji, value = consecutive correct count
+let queue = [], roundNum = 0;
+
+// Two canvas systems
+const canvases = {
+  h: { el: document.getElementById('cvH'), ctx: null, strokes: [], cur: [], drawing: false, drawn: false, onCanvas: false, ph: document.getElementById('phH') },
+  k: { el: document.getElementById('cvK'), ctx: null, strokes: [], cur: [], drawing: false, drawn: false, onCanvas: false, ph: document.getElementById('phK') }
+};
+canvases.h.ctx = canvases.h.el.getContext('2d');
+canvases.k.ctx = canvases.k.el.getContext('2d');
+
+let activeCanvas = 'h'; // which canvas is active
+function setActive(id) {
+  activeCanvas = id;
+  canvases.h.el.classList.toggle('active-canvas', id === 'h');
+  canvases.k.el.classList.toggle('active-canvas', id === 'k');
+}
+setActive('h');
+
+const $ = id => document.getElementById(id);
+
+// Pen size
+document.querySelectorAll('.pen-size-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.pen-size-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    penSize = parseInt(btn.dataset.size);
+  });
+});
+
+// Shuffle
+function shuffle(a) {
+  for (let i = a.length-1; i > 0; i--) { const j = Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; }
+  return a;
+}
+
+function buildQueue() {
+  const pool = kanaData.filter(k => (masteryMap[k.r]||0) < 3);
+  return pool.length ? shuffle([...pool]) : [];
+}
+
+function pickKana() {
+  if (!queue.length) { queue = buildQueue(); if (queue.length) roundNum++; }
+  if (!queue.length) { current = null; return; }
+  current = queue.shift();
+}
+
+// Drawing helpers per canvas
+function getPos(cv, e) {
+  const r = cv.el.getBoundingClientRect();
+  const sx = cv.el.width/r.width, sy = cv.el.height/r.height;
+  if (e.touches) return { x:(e.touches[0].clientX-r.left)*sx, y:(e.touches[0].clientY-r.top)*sy };
+  return { x:(e.clientX-r.left)*sx, y:(e.clientY-r.top)*sy };
+}
+
+function beginStroke(cv, p) {
+  cv.drawing = true; cv.drawn = true;
+  cv.ph.classList.add('hidden');
+  cv.cur = [{...p, size: penSize}];
+  cv.ctx.beginPath(); cv.ctx.moveTo(p.x, p.y);
+  cv.ctx.strokeStyle = '#1a202c'; cv.ctx.lineWidth = penSize;
+  cv.ctx.lineCap = 'round'; cv.ctx.lineJoin = 'round';
+}
+
+function continueStroke(cv, p) {
+  cv.cur.push({...p, size: penSize});
+  cv.ctx.lineTo(p.x, p.y); cv.ctx.stroke(); cv.ctx.beginPath(); cv.ctx.moveTo(p.x, p.y);
+}
+
+function finishStroke(cv) {
+  if (!cv.drawing) return;
+  cv.drawing = false;
+  if (cv.cur.length) { cv.strokes.push([...cv.cur]); cv.cur = []; }
+  cv.ctx.beginPath();
+}
+
+function redraw(cv) {
+  cv.ctx.clearRect(0, 0, cv.el.width, cv.el.height);
+  for (const s of cv.strokes) {
+    if (!s.length) continue;
+    cv.ctx.beginPath(); cv.ctx.strokeStyle='#1a202c'; cv.ctx.lineWidth=s[0].size||5;
+    cv.ctx.lineCap='round'; cv.ctx.lineJoin='round'; cv.ctx.moveTo(s[0].x, s[0].y);
+    for (let i=1; i<s.length; i++) {
+      cv.ctx.lineTo(s[i].x, s[i].y); cv.ctx.stroke(); cv.ctx.beginPath(); cv.ctx.moveTo(s[i].x, s[i].y);
+    }
+    cv.ctx.beginPath();
+  }
+}
+
+function clearCanvas(cv) {
+  cv.ctx.clearRect(0, 0, cv.el.width, cv.el.height);
+  cv.strokes = []; cv.cur = []; cv.drawn = false; cv.drawing = false;
+  cv.ph.classList.remove('hidden');
+}
+
+function undoCanvas(cv) {
+  if (!cv.strokes.length) return;
+  cv.strokes.pop(); redraw(cv);
+  if (!cv.strokes.length) { cv.drawn = false; cv.ph.classList.remove('hidden'); }
+}
+
+// Bind events for each canvas
+['h','k'].forEach(id => {
+  const cv = canvases[id];
+
+  cv.el.addEventListener('mousedown', e => {
+    setActive(id);
+    if (trackpadMode) return;
+    e.preventDefault(); beginStroke(cv, getPos(cv, e));
+  });
+
+  cv.el.addEventListener('mousemove', e => {
+    if (trackpadMode) {
+      if (!penDown || !cv.onCanvas || activeCanvas !== id) return;
+      e.preventDefault();
+      const p = getPos(cv, e);
+      if (!cv.drawing) beginStroke(cv, p);
+      else continueStroke(cv, p);
+    } else {
+      if (!cv.drawing) return;
+      e.preventDefault(); continueStroke(cv, getPos(cv, e));
+    }
+  });
+
+  cv.el.addEventListener('mouseup', e => {
+    if (trackpadMode) return;
+    e.preventDefault(); finishStroke(cv);
+  });
+
+  cv.el.addEventListener('mouseleave', e => {
+    cv.onCanvas = false;
+    if (trackpadMode) finishStroke(cv);
+    else finishStroke(cv);
+  });
+
+  cv.el.addEventListener('mouseenter', e => {
+    cv.onCanvas = true;
+    if (trackpadMode) setActive(id);
+  });
+
+  cv.el.addEventListener('touchstart', e => { setActive(id); e.preventDefault(); beginStroke(cv, getPos(cv, e)); }, {passive:false});
+  cv.el.addEventListener('touchmove', e => { if (!cv.drawing) return; e.preventDefault(); continueStroke(cv, getPos(cv, e)); }, {passive:false});
+  cv.el.addEventListener('touchend', e => { e.preventDefault(); finishStroke(cv); });
+});
+
+// Trackpad toggle
+$('trackpadBtn').addEventListener('click', () => {
+  trackpadMode = !trackpadMode;
+  $('trackpadBtn').classList.toggle('active', trackpadMode);
+  $('trackpadHint').classList.toggle('show', trackpadMode);
+  penDown = false;
+  ['h','k'].forEach(id => { finishStroke(canvases[id]); });
+  canvases.h.el.style.borderColor = '';
+  canvases.k.el.style.borderColor = '';
+});
+
+// Clear / Undo for active canvas
+$('clearBtn').addEventListener('click', () => clearCanvas(canvases[activeCanvas]));
+$('undoBtn').addEventListener('click', () => undoCanvas(canvases[activeCanvas]));
+
+// Show answer
+$('showAnswerBtn').addEventListener('click', () => {
+  if (!current) return;
+  $('ansH').textContent = current.h;
+  $('ansK').textContent = current.k;
+  $('answerExtra').textContent = '';
+  $('answerReveal').classList.add('show');
+  $('showAnswerBtn').style.display = 'none';
+  $('nextBtn').style.display = 'none';
+  $('gradeButtons').style.display = 'flex';
+});
+
+function grade(ok) {
+  totalCount++; if (ok) correctCount++;
+  if (ok) masteryMap[current.r] = (masteryMap[current.r]||0) + 1;
+  else masteryMap[current.r] = 0;
+  $('total').textContent = totalCount;
+  $('correct').textContent = correctCount;
+  $('rate').textContent = Math.round(correctCount/totalCount*100)+'%';
+  const mastered = kanaData.filter(k => (masteryMap[k.r]||0) >= 3).length;
+  $('progressFill').style.width = Math.round(mastered/kanaData.length*100)+'%';
+  $('gradeButtons').style.display = 'none';
+  $('nextBtn').style.display = 'inline-block';
+  if (ok && masteryMap[current.r] >= 3) {
+    $('answerExtra').textContent = '⭐ Mastered!';
+  }
+}
+
+$('correctBtn').addEventListener('click', () => grade(true));
+$('wrongBtn').addEventListener('click', () => grade(false));
+$('nextBtn').addEventListener('click', nextQuestion);
+
+function nextQuestion() {
+  pickKana();
+  clearCanvas(canvases.h); clearCanvas(canvases.k);
+  penDown = false;
+  canvases.h.el.style.borderColor = '';
+  canvases.k.el.style.borderColor = '';
+  setActive('h');
+  $('answerReveal').classList.remove('show');
+  $('showAnswerBtn').style.display = 'inline-block';
+  $('gradeButtons').style.display = 'flex';
+  $('nextBtn').style.display = 'none';
+  if (!current) {
+    $('promptRomaji').textContent = '🎉';
+    $('promptInfo').textContent = 'All mastered! Refresh to restart.';
+    $('showAnswerBtn').style.display = 'none';
+    return;
+  }
+  const remaining = kanaData.filter(k => (masteryMap[k.r]||0) < 3).length;
+  $('promptRomaji').textContent = current.r;
+  $('promptInfo').textContent = `Round ${roundNum} · ${remaining} remaining`;
+}
+
+// Keyboard
+document.addEventListener('keydown', e => {
+  if (e.code === 'Tab') {
+    e.preventDefault();
+    setActive(activeCanvas === 'h' ? 'k' : 'h');
+    if (trackpadMode) {
+      finishStroke(canvases.h); finishStroke(canvases.k);
+    }
+    return;
+  }
+  if (e.code === 'Space') {
+    if (trackpadMode) {
+      e.preventDefault();
+      penDown = !penDown;
+      if (!penDown) { finishStroke(canvases.h); finishStroke(canvases.k); }
+      const ac = canvases[activeCanvas].el;
+      ac.style.borderColor = penDown ? '#ed8936' : '';
+    }
+    return;
+  }
+  if (e.code === 'Enter') {
+    e.preventDefault();
+    if ($('nextBtn').style.display !== 'none') nextQuestion();
+    else if (!$('answerReveal').classList.contains('show')) $('showAnswerBtn').click();
+  }
+});
+
+nextQuestion();
+</script>
+</body>
+</html>
